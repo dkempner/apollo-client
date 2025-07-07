@@ -381,7 +381,7 @@ export class ApolloClient implements DataProxy {
   /**
    * Call this method to terminate any active client processes, making it safe
    * to dispose of this `ApolloClient` instance.
-   * 
+   *
    * This method performs aggressive cleanup to prevent memory leaks:
    * - Unsubscribes all active `ObservableQuery` instances by emitting a `completed` event
    * - Rejects all currently running queries with "QueryManager stopped while query was in flight"
