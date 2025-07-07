@@ -511,6 +511,8 @@ Uses the same logic as `cache-first`, except this query does _not_ automatically
 
 `standby` queries return `networkStatus: NetworkStatus.ready` even before subscription, providing immediate feedback to your UI.
 
+Note: `standby` is only supported for watched queries (`useQuery`, `watchQuery`). One-time queries (`client.query`) do not support the `standby` fetchPolicy.
+
 </td>
 </tr>
 </tbody>

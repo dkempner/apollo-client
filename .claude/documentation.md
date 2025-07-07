@@ -1,5 +1,5 @@
 # Documentation specific instructions
-Documentation can be found in the `docs/` directory and in the `src/` directory as DocBlocks.
+Documentation can be found in the `docs/` directory (which contains both `.md` and `.mdx` files) and in the `src/` directory (which contains both `.ts` and `.tsx` files) as DocBlocks.
 
 ## Data sources
 See @docs/source/_sidebar.yaml for the documentation structure.
@@ -102,3 +102,7 @@ Never use phrases like "since version 4.0, this or that change applied". Only do
 
 ### Updating DocBlocks
 If outdated or incorrect documentation is found in `docs/public/client.api.json`, find the closest parent `fileUrlPath` in the JSON structure and update the original DocBlock in that file. Then run `npm run docmodel` to regenerate the JSON file and read the `docs/public/client.api.json` again.
+
+### General rules
+
+When applying code changes, double-check if the same change hasn't already been applied previously.
