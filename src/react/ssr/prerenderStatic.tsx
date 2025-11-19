@@ -87,17 +87,17 @@ export declare namespace prerenderStatic {
      *   - this API has no suspense support and will not work with hooks like `useSuspenseQuery`
      */
     renderFunction:
-      | RenderToString
-      | RenderToStringPromise
-      | PrerenderToWebStream
-      | PrerenderToNodeStream
-      | ((
-          reactNode: ReactTypes.ReactNode
-        ) =>
-          | ReturnType<RenderToString>
-          | ReturnType<RenderToStringPromise>
-          | ReturnType<PrerenderToWebStream>
-          | ReturnType<PrerenderToNodeStream>);
+    | RenderToString
+    | RenderToStringPromise
+    | PrerenderToWebStream
+    | PrerenderToNodeStream
+    | ((
+      reactNode: ReactTypes.ReactNode
+    ) =>
+      | ReturnType<RenderToString>
+      | ReturnType<RenderToStringPromise>
+      | ReturnType<PrerenderToWebStream>
+      | ReturnType<PrerenderToNodeStream>);
     /**
      * If this is set to `true`, the result will contain a `diagnostics` property that can help you e.g. detect `useQuery` waterfalls in your application.
      * @defaultValue false
@@ -112,6 +112,17 @@ export declare namespace prerenderStatic {
      * @defaultValue 50
      */
     maxRerenders?: number;
+
+    /**
+     * If set to a number greater than 0, `prerenderStatic` will not wait for all queries to finish before re-rendering.
+     * Instead, it will wait for *any* query to finish, then wait for this delay (in milliseconds) to allow other queries to finish,
+     * and then re-render immediately.
+     * This can significantly reduce total SSR time in applications with mixed-latency queries, where a fast query
+     * reveals a child component that has its own data requirements, which would otherwise be blocked by a slow sibling query.
+     *
+     * @defaultValue 0 (disabled)
+     */
+    debounceDelay?: number;
   }
 
   export interface Result {
@@ -162,7 +173,7 @@ export declare namespace prerenderStatic {
   }>;
 }
 
-const noopObserver: Partial<Observer<unknown>> = { complete() {} };
+const noopObserver: Partial<Observer<unknown>> = { complete() { } };
 
 /**
  * This function will rerender your React tree until no more network requests need
@@ -189,13 +200,14 @@ export function prerenderStatic({
   ignoreResults,
   diagnostics,
   maxRerenders = 50,
+  debounceDelay = 0,
 }: prerenderStatic.Options): Promise<prerenderStatic.Result> {
   const availableObservableQueries = new Map<
     ObservableQueryKey,
     ObservableQuery
   >();
   const subscriptions = new Set<Subscription>();
-  let recentlyCreatedObservableQueries = new Set<ObservableQuery>();
+  const pendingQueries = new Set<ObservableQuery>();
   let renderCount = 0;
 
   const internalContext: PrerenderStaticInternalContext = {
@@ -217,7 +229,7 @@ export function prerenderStatic({
       // otherwise it will be torn down after every render pass
       subscriptions.add(observable.subscribe(noopObserver));
       if (observable.options.fetchPolicy !== "cache-only") {
-        recentlyCreatedObservableQueries.add(observable);
+        pendingQueries.add(observable);
       }
     },
   };
@@ -259,22 +271,33 @@ you have an infinite render loop in your application.`,
     );
     const result = await consume(await renderFunction(element));
 
-    if (recentlyCreatedObservableQueries.size == 0) {
+    if (pendingQueries.size == 0) {
       return { result, aborted: false };
     }
     if (signal?.aborted) {
       return { result, aborted: true };
     }
 
-    const dataPromise = Promise.all(
-      Array.from(recentlyCreatedObservableQueries).map(async (observable) => {
-        await firstValueFrom(
-          observable.pipe(filter((result) => result.loading === false))
-        );
+    const waitForQuery = (observable: ObservableQuery) =>
+      firstValueFrom(
+        observable.pipe(filter((result) => result.loading === false))
+      ).then(() => {
+        pendingQueries.delete(observable);
+      });
 
-        recentlyCreatedObservableQueries.delete(observable);
-      })
-    );
+    const promises = Array.from(pendingQueries).map(waitForQuery);
+
+    let dataPromise: Promise<void>;
+    if (debounceDelay > 0) {
+      // Eager mode: wait for ANY query to finish, then debounce
+      dataPromise = Promise.race(promises).then(async () => {
+        // Wait for debounce delay to allow other queries to finish
+        await new Promise((resolve) => setTimeout(resolve, debounceDelay));
+      });
+    } else {
+      // Standard mode: wait for ALL queries to finish
+      dataPromise = Promise.all(promises).then(() => { });
+    }
 
     let resolveAbortPromise!: () => void;
     const abortPromise = new Promise<void>((resolve) => {
@@ -300,24 +323,23 @@ you have an infinite render loop in your application.`,
             renderCount,
           },
         }
-      : result
+        : result
     )
     .finally(() => {
       availableObservableQueries.clear();
-      recentlyCreatedObservableQueries.clear();
+      pendingQueries.clear();
       subscriptions.forEach((subscription) => subscription.unsubscribe());
       subscriptions.clear();
     });
-
   async function consume(
     value:
       | string
       | {
-          prelude: ReadableStream<Uint8Array>;
-        }
+        prelude: ReadableStream<Uint8Array>;
+      }
       | {
-          prelude: AsyncIterable<string | Buffer>;
-        }
+        prelude: AsyncIterable<string | Buffer>;
+      }
   ): Promise<string> {
     if (typeof value === "string") {
       return ignoreResults ? "" : value;
@@ -325,8 +347,8 @@ you have an infinite render loop in your application.`,
     if (!value.prelude) {
       throw new Error(
         "`getMarkupFromTree` was called with an incompatible render method.\n" +
-          'It is compatible with `renderToStaticMarkup` and `renderToString`  from `"react-dom/server"`\n' +
-          'as well as `prerender` and `prerenderToNodeStream` from "react-dom/static"'
+        'It is compatible with `renderToStaticMarkup` and `renderToString`  from `"react-dom/server"`\n' +
+        'as well as `prerender` and `prerenderToNodeStream` from "react-dom/static"'
       );
     }
     const prelude = value.prelude;
